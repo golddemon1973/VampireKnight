@@ -27,7 +27,7 @@ namespace VampireKnight
         private bool _vampireSwingHit = false;
         private Menu _menuRef;
 
-        public override string GetVersion() => "1.2.0.36";
+        public override string GetVersion() => "26.4.2.1";
 
         AudioClip CarefreeSFX;
         AudioClip BaldurShellSFX;
