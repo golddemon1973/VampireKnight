@@ -109,6 +109,8 @@ namespace VampireKnight
 
                 if (!Kill && (PlayerData.instance.health <= 1)) continue;
 
+                HeroController.instance.GetComponent<AudioSource>().PlayOneShot(BaldurShellSFX, 1f);
+
                 if (PlayerData.instance.health <= Maskloss || PlayerData.instance.health == 1)
                 {
                     HeroController.instance.TakeHealth(PlayerData.instance.health);
@@ -145,6 +147,8 @@ namespace VampireKnight
                 if (PlayerData.instance.health < PlayerData.instance.maxHealth)
                 {
                     HeroController.instance.AddHealth(1);
+
+                    HeroController.instance.GetComponent<AudioSource>().PlayOneShot(CarefreeSFX, 1f);
                 }
             }
         }
