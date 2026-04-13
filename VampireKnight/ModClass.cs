@@ -1,14 +1,17 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using GlobalEnums;
+using JetBrains.Annotations;
 using Modding;
 using Modding.Delegates;
 using Satchel.BetterMenus;
 using UnityEngine;
-using UObject = UnityEngine.Object;
+using static UnityEngine.Networking.UnityWebRequest;
 using PlaymakerFSM = PlayMakerFSM;
+using UObject = UnityEngine.Object;
 
 namespace VampireKnight
 {
@@ -24,35 +27,49 @@ namespace VampireKnight
         private bool _vampireSwingHit = false;
         private Menu _menuRef;
 
-        public override string GetVersion() => "26.4.0.0";
+        public override string GetVersion() => "1.2.0.36";
+
+        AudioClip CarefreeSFX;
+        AudioClip BaldurShellSFX;
 
         public override void Initialize(Dictionary<string, Dictionary<string, GameObject>> preloadedObjects)
         {
             Instance = this;
+
             HookAll();
+
+            Log("[INFO] :: (Hooked events and started drain coroutine)");
+
+            CarefreeSFX = Resources.FindObjectsOfTypeAll<AudioClip>()
+            .FirstOrDefault(x => x.name == "carefree_melody_metallic");
+
+            Log("[INFO] :: (Found asset 'carefree_melody_metallic'; Upon enemy hit sound)");
+
+            BaldurShellSFX = Resources.FindObjectsOfTypeAll<AudioClip>()
+           .FirstOrDefault(x => x.name == "shell_shield_hit");
+
+            Log("[INFO] :: (Found asset 'shell_shield_hit'; Upon player maskloss sound)");
         }
 
         private void HookAll()
         {
             ModHooks.SlashHitHook += OnSlashHitHook;
             ModHooks.AfterAttackHook += ResetCooldown;
-            On.HeroController.StartMPDrain += SuppressMPDrain;
             On.HeroController.Awake += OnHeroAwake;
+            On.HeroController.CanFocus += NoFocus;
         }
 
-        public void Unload()
+        private bool NoFocus(On.HeroController.orig_CanFocus orig, HeroController self)
         {
-            ModHooks.SlashHitHook -= OnSlashHitHook;
-            ModHooks.AfterAttackHook -= ResetCooldown;
-            On.HeroController.StartMPDrain -= SuppressMPDrain;
-            On.HeroController.Awake -= OnHeroAwake;
-        }
+            if (GS.VampireEnabled) return false;
 
-        private void SuppressMPDrain(On.HeroController.orig_StartMPDrain orig, HeroController self, float speed) { }
+            return orig(self);
+        }
 
         private void OnHeroAwake(On.HeroController.orig_Awake orig, HeroController self)
         {
             orig(self);
+
             GameManager.instance.StartCoroutine(SlowDrain());
         }
 
@@ -60,76 +77,58 @@ namespace VampireKnight
         {
             while (true)
             {
-                float waitTime = Mathf.Lerp(6f, 1f, (GS.BloodlossRate - 1) / 9f);
-                yield return new WaitForSeconds(waitTime);
+                Dictionary<string, object> DifficultyOps = GetDifficultyOptions();
+
+                int BloodlossRate = DifficultyOps.TryGetValue("BloodlossRate", out object brRaw)
+                ? (int)brRaw
+                : 5; // default value incase of an unexpected error
+
+                int Maskloss = DifficultyOps.TryGetValue("MasklossWhenBloodloss", out object mlRaw)
+                ? (int)mlRaw
+                : 1; // default value incase of an unexpected error
+
+                bool Kill = DifficultyOps.TryGetValue("Kill", out object kRaw)
+                ? (bool)kRaw
+                : false; // default value incase of an unexpected error
+
+                yield return new WaitForSeconds(BloodlossRate);
 
                 if (!GS.VampireEnabled) continue;
 
                 if (!HeroController.instance.acceptingInput) continue;
 
+                if (PlayerData.instance.health == 0) continue;
+
                 // this SUCKS i hate myself
 
-                bool hasAliveEnemy = UnityEngine.Object.FindObjectsOfType<HealthManager>()
+                bool hasValidEnemy = UnityEngine.Object.FindObjectsOfType<HealthManager>()
+                    .Any(hm => !hm.IsInvincible) && UnityEngine.Object.FindObjectsOfType<HealthManager>()
                     .Any(hm => !hm.isDead);
 
-                bool hasVulnerableEnemy = UnityEngine.Object.FindObjectsOfType<HealthManager>()
-                    .Any(hm => !hm.IsInvincible);
+                if (!hasValidEnemy) continue;
 
-                if (!hasAliveEnemy || !hasVulnerableEnemy) continue;
+                if (!Kill && (PlayerData.instance.health <= 1)) continue;
 
-                if (PlayerData.instance.health <= 1) continue;
-
-                PlayerData.instance.health -= 1;
-
-                GameObject healthObj = GameObject.Find("Health");
-                if (healthObj != null)
+                if (PlayerData.instance.health <= Maskloss || PlayerData.instance.health == 1)
                 {
-                    foreach (var fsm in healthObj.GetComponentsInChildren<PlaymakerFSM>(true)
-                                                 .Where(f => f.FsmName == "health_display"))
-                    {
-                        fsm.SendEvent("HERO DAMAGED");
-                    }
+                    HeroController.instance.TakeHealth(PlayerData.instance.health);
+                    HeroController.instance.StartCoroutine("Die");
+
+                    continue;
                 }
+
+                HeroController.instance.TakeHealth(Maskloss);
             }
         }
 
-        private void ResetCooldown(AttackDirection dir)
+        private void ResetCooldown(AttackDirection Direction)
         {
             _vampireSwingHit = false;
         }
 
-        private void UpdateMasks()
-        {
-            // livin' on a prayer
-
-            GameObject healthObj = GameObject.Find("Health");
-
-            if (healthObj == null && GameCameras.instance != null)
-            {
-                Log("Couldn't find Health HUD with basic search. Attempting deep search...");
-                healthObj = GameCameras.instance.hudCanvas.GetComponentInChildren<PlaymakerFSM>(true)
-                            .gameObject.scene.GetRootGameObjects()
-                            .SelectMany(g => g.GetComponentsInChildren<PlaymakerFSM>(true))
-                            .FirstOrDefault(f => f.FsmName == "Update Health")?.gameObject;
-            }
-
-            if (healthObj != null)
-            {
-                foreach (var fsm in healthObj.GetComponentsInChildren<PlaymakerFSM>(true)
-                                 .Where(f => f.FsmName == "health_display"))
-                {
-                    fsm.SendEvent("HERO HEALED");
-                }
-            }
-            else
-            {
-                Log("Couldn't find Health HUD even with deep search.");
-            }
-        }
-
         private void OnSlashHitHook(Collider2D enemyCollider, GameObject enemyGameObject)
         {
-            // this is very poorly optimized BUT it works so i'm happy
+            // this is now pretty optimized
 
             if (!GS.VampireEnabled) return;
             if (_vampireSwingHit) return;
@@ -143,23 +142,49 @@ namespace VampireKnight
 
                 _vampireSwingHit = true;
 
-                AudioClip carefreeSound = Resources.FindObjectsOfTypeAll<AudioClip>()
-                   .FirstOrDefault(x => x.name.IndexOf("carefree", StringComparison.OrdinalIgnoreCase) >= 0);
-                if (carefreeSound != null)
-                {
-                    HeroController.instance.GetComponent<AudioSource>().PlayOneShot(carefreeSound, 1f);
-                }
-                else
-                {
-                    Log("could not find carefree melody sfx. checking other sounds...");
-                }
-
                 if (PlayerData.instance.health < PlayerData.instance.maxHealth)
                 {
-                    PlayerData.instance.health += 1;
+                    HeroController.instance.AddHealth(1);
                 }
+            }
+        }
 
-                UpdateMasks();
+        Dictionary<string, object> EasyDifficulty = new() {
+            {"BloodlossRate", 7},
+            {"MasklossWhenBloodloss", 1},
+            {"Kill", false}
+        };
+
+        Dictionary<string, object> NormalDifficulty = new() {
+            {"BloodlossRate", 5},
+            {"MasklossWhenBloodloss", 1},
+            {"Kill", false}
+        };
+
+        Dictionary<string, object> HardcoreDifficulty = new() {
+            {"BloodlossRate", 6},
+            {"MasklossWhenBloodloss", 2},
+            {"Kill", true}
+        };
+
+        Dictionary<string, object> PantheonDifficulty = new() {
+            {"BloodlossRate", 2},
+            {"MasklossWhenBloodloss", 1},
+            {"Kill", true}
+        };
+
+        private Dictionary<string, object> GetDifficultyOptions()
+        {
+            switch (GS.ModDifficulty)
+            {
+                case 0: return EasyDifficulty;
+                case 1: return NormalDifficulty;
+                case 2: return HardcoreDifficulty;
+                case 3: return PantheonDifficulty;
+                default:
+                    LogWarn("[WARN] :: (Difficulty index out of bounds; resetting to 1)");
+                    GS.ModDifficulty = 1;
+                    return NormalDifficulty;
             }
         }
 
@@ -173,6 +198,8 @@ namespace VampireKnight
             {
                 // blueprints.. like.. A BLUE SPY? A BLEU SPY'S IN TBHEZ BAZEZ I REPEATTTTTT
 
+                new TextPanel("— General —"),
+
                 Blueprints.HorizontalBoolOption(
                     name:         "Vampire Enabled",
                     description:  "Toggles the vampire mechanic on or off.",
@@ -180,19 +207,22 @@ namespace VampireKnight
                     loadSetting:  ()  => GS.VampireEnabled
                 ),
 
-                Blueprints.IntInputField(
-                    name:             "Bloodloss Rate",
-                    _storeValue:      i => GS.BloodlossRate = Mathf.Clamp(i, 1, 10),
-                    _loadValue:       () => GS.BloodlossRate,
-                    _placeholder:     "Enter a value between 1 and 10",
-                    _characterLimit:  2,
-                    Id:               "BloodlossRateInput"
+                new TextPanel("— Settings —"),
+
+                new HorizontalOption(
+                    name:         "Mod Difficulty",
+                    description:  "Choose the difficulty of the mod.",
+                    values:       new[] { "Easy", "Normal", "Hardcore", "Pantheon"},
+                    applySetting: index => GS.ModDifficulty = index,
+                    loadSetting:  ()    => GS.ModDifficulty
                 ),
 
                 new TextPanel("— Credits —"),
                 new TextPanel("Author: ivory"),
                 new TextPanel("Special Thanks: Charles Game Dev"),
                 new TextPanel("Helped me figure out how to make this mod correctly through his scripts"),
+                new TextPanel("Special Thanks: Satchel"),
+                new TextPanel("Used Satchel's BetterMenus which made making menus alot easier"),
             });
 
             return _menuRef.GetMenuScreen(modListMenu);
