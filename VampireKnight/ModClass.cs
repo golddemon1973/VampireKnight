@@ -24,13 +24,14 @@ namespace VampireKnight
         public void OnLoadGlobal(GlobalSettings s) => GS = s;
         public GlobalSettings OnSaveGlobal() => GS;
 
-        private bool _vampireSwingHit = false;
         private Menu _menuRef;
 
-        public override string GetVersion() => "26.4.2.1";
+        public override string GetVersion() => "26.4.4.0";
+        public new string GetName() => "Vampire Knight";
 
         AudioClip CarefreeSFX;
         AudioClip BaldurShellSFX;
+        AudioClip LifebloodHitSFX;
 
         public override void Initialize(Dictionary<string, Dictionary<string, GameObject>> preloadedObjects)
         {
@@ -38,23 +39,98 @@ namespace VampireKnight
 
             HookAll();
 
-            Log("[INFO] :: (Hooked events and started drain coroutine)");
+            Log("[INFO] :: (Hooked events, loaded assets and started drain coroutine)");
+        }
+
+        private IEnumerator LoadAssets()
+        {
+            Log("[INFO] :: (Loading assets...)");
 
             CarefreeSFX = Resources.FindObjectsOfTypeAll<AudioClip>()
-            .FirstOrDefault(x => x.name == "carefree_melody_metallic");
+.           FirstOrDefault(x => x.name == "carefree_melody_metallic");
 
-            Log("[INFO] :: (Found asset 'carefree_melody_metallic'; Upon enemy hit sound)");
+            if (CarefreeSFX != null)
+            {
+                Log("[INFO] :: (Found asset 'carefree_melody_metallic'; Upon player maskgain sound)");
+            }
+            else
+            {
+                yield return new WaitForSeconds(1);
+
+                LogWarn("[WARN] :: (Couldn't find asset 'carefree_melody_metallic'; retrying soon)");
+
+                CarefreeSFX = Resources.FindObjectsOfTypeAll<AudioClip>()
+                .FirstOrDefault(x => x.name == "carefree_melody_metallic");
+
+                if (CarefreeSFX != null)
+                {
+                    Log("[INFO] :: (Found asset 'carefree_melody_metallic' on second attempt; Upon player maskgain sound)");
+                }
+                else
+                {
+                    LogWarn("[WARN] :: (Still couldn't find 'carefree_melody_metallic' on second attempt; will not play sound)");
+                }
+            }
 
             BaldurShellSFX = Resources.FindObjectsOfTypeAll<AudioClip>()
-           .FirstOrDefault(x => x.name == "shell_shield_hit");
+           .FirstOrDefault(x => x.name == "hero_blocker_charm_block");
 
-            Log("[INFO] :: (Found asset 'shell_shield_hit'; Upon player maskloss sound)");
+            if (BaldurShellSFX != null)
+            {
+                Log("[INFO] :: (Found asset 'hero_blocker_charm_block'; Upon player maskloss sound)");
+            }
+            else
+            {
+                yield return new WaitForSeconds(1);
+
+                LogWarn("[WARN] :: (Couldn't find asset 'hero_blocker_charm_block'; retrying soon)");
+
+                BaldurShellSFX = Resources.FindObjectsOfTypeAll<AudioClip>()
+                .FirstOrDefault(x => x.name == "hero_blocker_charm_block");
+
+                if (BaldurShellSFX != null)
+                {
+                    Log("[INFO] :: (Found asset 'hero_blocker_charm_block' on second attempt; Upon player maskloss sound)");
+                }
+                else
+                {
+                    LogWarn("[WARN] :: (Still couldn't find 'hero_blocker_charm_block' on second attempt; will not play sound)");
+                }
+            }
+
+            //health_cocoon_break
+
+            LifebloodHitSFX = Resources.FindObjectsOfTypeAll<AudioClip>()
+            .FirstOrDefault(x => x.name == "health_cocoon_break");
+
+            if (LifebloodHitSFX != null)
+            {
+                Log("[INFO] :: (Found asset 'health_cocoon_break'; Upon player maskloss sound)");
+            }
+            else
+            {
+                yield return new WaitForSeconds(1);
+
+                LogWarn("[WARN] :: (Couldn't find asset 'health_cocoon_break'; retrying soon)");
+
+                LifebloodHitSFX = Resources.FindObjectsOfTypeAll<AudioClip>()
+                .FirstOrDefault(x => x.name == "health_cocoon_break");
+
+                if (LifebloodHitSFX != null)
+                {
+                    Log("[INFO] :: (Found asset 'health_cocoon_break' on second attempt; Upon player maskloss sound)");
+                }
+                else
+                {
+                    LogWarn("[WARN] :: (Still couldn't find 'health_cocoon_break' on second attempt; will not play sound)");
+                }
+            }
         }
 
         private void HookAll()
         {
-            ModHooks.SlashHitHook += OnSlashHitHook;
-            ModHooks.AfterAttackHook += ResetCooldown;
+            On.HealthManager.Hit += OnEnemyHitHook;
+
             On.HeroController.Awake += OnHeroAwake;
             On.HeroController.CanFocus += NoFocus;
         }
@@ -70,10 +146,39 @@ namespace VampireKnight
         {
             orig(self);
 
-            GameManager.instance.StartCoroutine(SlowDrain());
+            GameManager.instance.StartCoroutine(Bloodloss());
+            GameManager.instance.StartCoroutine(LoadAssets());
         }
 
-        private IEnumerator SlowDrain()
+        private bool IsEnemyVulnerable(HealthManager HealthManager)
+        {
+            var Collider = HealthManager.GetComponent<Collider2D>();
+
+            if (Collider == null || !Collider.enabled) return false;
+
+            var FSMComponent = HealthManager.gameObject.GetComponent<PlayMakerFSM>();
+
+            if (FSMComponent != null)
+            {
+                var isInvincible = FSMComponent.FsmVariables.FindFsmBool("Is Invincible");
+
+                if (isInvincible != null && isInvincible.Value) return false;
+            }
+
+            return true;
+        }
+
+        public bool IsAnyVulnerableEnemyAlive()
+        {
+            return UObject.FindObjectsOfType<HealthManager>().Any(Enemy =>
+                Enemy != null &&
+                !Enemy.isDead &&
+                Enemy.gameObject.activeInHierarchy &&
+                IsEnemyVulnerable(Enemy)
+            );
+        }
+
+        private IEnumerator Bloodloss()
         {
             while (true)
             {
@@ -93,63 +198,49 @@ namespace VampireKnight
 
                 yield return new WaitForSeconds(BloodlossRate);
 
-                if (!GS.VampireEnabled) continue;
+                // first checks
 
-                if (!HeroController.instance.acceptingInput) continue;
+                if (!GS.VampireEnabled || !HeroController.instance.acceptingInput || PlayerData.instance.health == 0) continue;
 
-                if (PlayerData.instance.health == 0) continue;
+                // second checks
 
-                // this SUCKS i hate myself
-
-                bool hasValidEnemy = UnityEngine.Object.FindObjectsOfType<HealthManager>()
-                    .Any(hm => !hm.IsInvincible) && UnityEngine.Object.FindObjectsOfType<HealthManager>()
-                    .Any(hm => !hm.isDead);
+                bool hasValidEnemy = IsAnyVulnerableEnemyAlive();
 
                 if (!hasValidEnemy) continue;
 
-                if (!Kill && (PlayerData.instance.health <= 1)) continue;
-
-                HeroController.instance.GetComponent<AudioSource>().PlayOneShot(BaldurShellSFX, 1f);
-
-                if (PlayerData.instance.health <= Maskloss || PlayerData.instance.health == 1)
+                if (PlayerData.instance.healthBlue == 0 && PlayerData.instance.joniHealthBlue == 0)
                 {
-                    HeroController.instance.TakeHealth(PlayerData.instance.health);
-                    HeroController.instance.StartCoroutine("Die");
-
-                    continue;
+                    HeroController.instance.GetComponent<AudioSource>().PlayOneShot(BaldurShellSFX, 1f);
+                }
+                else
+                {
+                    HeroController.instance.GetComponent<AudioSource>().PlayOneShot(LifebloodHitSFX, 1f);
                 }
 
                 HeroController.instance.TakeHealth(Maskloss);
+
+                if (PlayerData.instance.health <= Maskloss && !Kill && PlayerData.instance.health != 1)
+                {
+                    HeroController.instance.TakeHealth(PlayerData.instance.health - 1);
+                } else if (PlayerData.instance.health <= Maskloss && Kill)
+                {
+                    HeroController.instance.TakeHealth(PlayerData.instance.health);
+                    HeroController.instance.StartCoroutine("Die");
+                }
             }
+
         }
 
-        private void ResetCooldown(AttackDirection Direction)
+        private void OnEnemyHitHook(On.HealthManager.orig_Hit orig, HealthManager self, HitInstance hitInstance)
         {
-            _vampireSwingHit = false;
-        }
-
-        private void OnSlashHitHook(Collider2D enemyCollider, GameObject enemyGameObject)
-        {
-            // this is now pretty optimized
+            orig(self, hitInstance);
 
             if (!GS.VampireEnabled) return;
-            if (_vampireSwingHit) return;
 
-            if (enemyCollider.gameObject.layer == 11)
+            if (PlayerData.instance.health < PlayerData.instance.maxHealth)
             {
-                HealthManager hm = enemyCollider.gameObject.GetComponent<HealthManager>()
-                 ?? enemyCollider.gameObject.GetComponentInParent<HealthManager>();
-
-                if (hm == null || hm.isDead) return;
-
-                _vampireSwingHit = true;
-
-                if (PlayerData.instance.health < PlayerData.instance.maxHealth)
-                {
-                    HeroController.instance.AddHealth(1);
-
-                    HeroController.instance.GetComponent<AudioSource>().PlayOneShot(CarefreeSFX, 1f);
-                }
+                HeroController.instance.AddHealth(1);
+                HeroController.instance.GetComponent<AudioSource>().PlayOneShot(CarefreeSFX, 1f);
             }
         }
 
@@ -172,9 +263,9 @@ namespace VampireKnight
         };
 
         Dictionary<string, object> PantheonDifficulty = new() {
-            {"BloodlossRate", 2},
+            {"BloodlossRate", 3},
             {"MasklossWhenBloodloss", 1},
-            {"Kill", true}
+            {"Kill", false}
         };
 
         private Dictionary<string, object> GetDifficultyOptions()
@@ -185,6 +276,13 @@ namespace VampireKnight
                 case 1: return NormalDifficulty;
                 case 2: return HardcoreDifficulty;
                 case 3: return PantheonDifficulty;
+                case 4:
+                    return new Dictionary<string, object> 
+                    {
+                    {"BloodlossRate", GS.CustomBloodlossRate},
+                    {"MasklossWhenBloodloss", GS.CustomMaskloss},
+                    {"Kill", GS.CustomKill}
+                    };
                 default:
                     LogWarn("[WARN] :: (Difficulty index out of bounds; resetting to 1)");
                     GS.ModDifficulty = 1;
@@ -211,14 +309,37 @@ namespace VampireKnight
                     loadSetting:  ()  => GS.VampireEnabled
                 ),
 
-                new TextPanel("— Settings —"),
+                new TextPanel("— Presets —"),
 
                 new HorizontalOption(
                     name:         "Mod Difficulty",
                     description:  "Choose the difficulty of the mod.",
-                    values:       new[] { "Easy", "Normal", "Hardcore", "Pantheon"},
+                    values:       new[] { "Easy", "Normal", "Hardcore", "Pantheon", "Custom"},
                     applySetting: index => GS.ModDifficulty = index,
                     loadSetting:  ()    => GS.ModDifficulty
+                ),
+
+                new TextPanel("— Custom —"),
+
+                new CustomSlider(
+                    name: "Custom Bloodloss",
+                    val => GS.CustomBloodlossRate = (int)val,
+                    () => GS.CustomBloodlossRate,
+                    1f, 20f, true
+                ),
+
+                new CustomSlider(
+                    name: "Custom Maskloss",
+                    val => GS.CustomMaskloss = (int)val,
+                    () => GS.CustomMaskloss,
+                    1f, 5f, true
+                ),
+
+                Blueprints.HorizontalBoolOption(
+                    name:         "Lethal Maskloss",
+                    description:  "Whether or not you can die out of Maskloss.",
+                    applySetting: val => GS.CustomKill = val,
+                    loadSetting:  ()  => GS.CustomKill
                 ),
 
                 new TextPanel("— Credits —"),
