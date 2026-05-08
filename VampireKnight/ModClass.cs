@@ -1,17 +1,12 @@
-using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using GlobalEnums;
-using JetBrains.Annotations;
 using Modding;
-using Modding.Delegates;
 using Satchel.BetterMenus;
 using UnityEngine;
-using static UnityEngine.Networking.UnityWebRequest;
-using PlaymakerFSM = PlayMakerFSM;
 using UObject = UnityEngine.Object;
+using Lifeblood;
 
 namespace VampireKnight
 {
@@ -25,9 +20,9 @@ namespace VampireKnight
         public GlobalSettings OnSaveGlobal() => GS;
 
         private Menu _menuRef;
-
-        public override string GetVersion() => "26.4.4.0";
+        public override string GetVersion() => "26.5.0.0";
         public new string GetName() => "Vampire Knight";
+        public bool VampireOnCooldown = false;
 
         AudioClip CarefreeSFX;
         AudioClip BaldurShellSFX;
@@ -133,6 +128,8 @@ namespace VampireKnight
 
             On.HeroController.Awake += OnHeroAwake;
             On.HeroController.CanFocus += NoFocus;
+
+            ModHooks.AfterAttackHook += UponCooldownReset;
         }
 
         private bool NoFocus(On.HeroController.orig_CanFocus orig, HeroController self)
@@ -148,6 +145,11 @@ namespace VampireKnight
 
             GameManager.instance.StartCoroutine(Bloodloss());
             GameManager.instance.StartCoroutine(LoadAssets());
+        }
+
+        private void UponCooldownReset(AttackDirection _)
+        {
+            VampireOnCooldown = false;
         }
 
         private bool IsEnemyVulnerable(HealthManager HealthManager)
@@ -202,30 +204,31 @@ namespace VampireKnight
 
                 if (!GS.VampireEnabled || !HeroController.instance.acceptingInput || PlayerData.instance.health == 0) continue;
 
+
                 // second checks
 
                 bool hasValidEnemy = IsAnyVulnerableEnemyAlive();
 
                 if (!hasValidEnemy) continue;
 
-                if (PlayerData.instance.healthBlue == 0 && PlayerData.instance.joniHealthBlue == 0)
+                if (PlayerData.instance.health > 1 && PlayerData.instance.healthBlue == 0 && PlayerData.instance.joniHealthBlue == 0)
                 {
-                    HeroController.instance.GetComponent<AudioSource>().PlayOneShot(BaldurShellSFX, 1f);
+                    LifebloodAPI.HeroPlayAudio(BaldurShellSFX, 1f);
                 }
-                else
+                else if (PlayerData.instance.health > 1 || (PlayerData.instance.healthBlue > 0 || PlayerData.instance.joniHealthBlue > 1))
                 {
-                    HeroController.instance.GetComponent<AudioSource>().PlayOneShot(LifebloodHitSFX, 1f);
+                    LifebloodAPI.HeroPlayAudio(LifebloodHitSFX, 1f);
                 }
 
-                HeroController.instance.TakeHealth(Maskloss);
+                LifebloodAPI.SubstractHealth(Maskloss);
 
-                if (PlayerData.instance.health <= Maskloss && !Kill && PlayerData.instance.health != 1)
+                if (PlayerData.instance.health <= Maskloss && !Kill)
                 {
-                    HeroController.instance.TakeHealth(PlayerData.instance.health - 1);
+                    LifebloodAPI.SetHealth(1);
                 } else if (PlayerData.instance.health <= Maskloss && Kill)
                 {
-                    HeroController.instance.TakeHealth(PlayerData.instance.health);
-                    HeroController.instance.StartCoroutine("Die");
+                    LifebloodAPI.SubstractHealth(Maskloss);
+                    LifebloodAPI.KillHero();
                 }
             }
 
@@ -235,35 +238,37 @@ namespace VampireKnight
         {
             orig(self, hitInstance);
 
-            if (!GS.VampireEnabled) return;
+            if (!GS.VampireEnabled || VampireOnCooldown) return;
+
+            VampireOnCooldown = true;
 
             if (PlayerData.instance.health < PlayerData.instance.maxHealth)
             {
-                HeroController.instance.AddHealth(1);
-                HeroController.instance.GetComponent<AudioSource>().PlayOneShot(CarefreeSFX, 1f);
+                LifebloodAPI.AddHealth(1);
+                LifebloodAPI.HeroPlayAudio(CarefreeSFX, 1f);
             }
         }
 
         Dictionary<string, object> EasyDifficulty = new() {
-            {"BloodlossRate", 7},
+            {"BloodlossRate", 4},
             {"MasklossWhenBloodloss", 1},
             {"Kill", false}
         };
 
         Dictionary<string, object> NormalDifficulty = new() {
-            {"BloodlossRate", 5},
+            {"BloodlossRate", 2.5},
             {"MasklossWhenBloodloss", 1},
             {"Kill", false}
         };
 
         Dictionary<string, object> HardcoreDifficulty = new() {
-            {"BloodlossRate", 6},
+            {"BloodlossRate", 4},
             {"MasklossWhenBloodloss", 2},
             {"Kill", true}
         };
 
         Dictionary<string, object> PantheonDifficulty = new() {
-            {"BloodlossRate", 3},
+            {"BloodlossRate", 0.75},
             {"MasklossWhenBloodloss", 1},
             {"Kill", false}
         };
