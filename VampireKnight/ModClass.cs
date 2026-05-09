@@ -182,13 +182,17 @@ namespace VampireKnight
 
         private IEnumerator Bloodloss()
         {
+            Log("running!");
+
             while (true)
             {
+                if (!GS.VampireEnabled) continue;
+
                 Dictionary<string, object> DifficultyOps = GetDifficultyOptions();
 
-                int BloodlossRate = DifficultyOps.TryGetValue("BloodlossRate", out object brRaw)
-                ? (int)brRaw
-                : 5; // default value incase of an unexpected error
+                float BloodlossRate = DifficultyOps.TryGetValue("BloodlossRate", out object brRaw)
+                ? (float)brRaw
+                : 5f; // default value incase of an unexpected error
 
                 int Maskloss = DifficultyOps.TryGetValue("MasklossWhenBloodloss", out object mlRaw)
                 ? (int)mlRaw
@@ -202,8 +206,7 @@ namespace VampireKnight
 
                 // first checks
 
-                if (!GS.VampireEnabled || !HeroController.instance.acceptingInput || PlayerData.instance.health == 0) continue;
-
+                if (!HeroController.instance.acceptingInput || PlayerData.instance.health == 0) continue;
 
                 // second checks
 
@@ -220,8 +223,6 @@ namespace VampireKnight
                     LifebloodAPI.HeroPlayAudio(LifebloodHitSFX, 1f);
                 }
 
-                LifebloodAPI.SubstractHealth(Maskloss);
-
                 if (PlayerData.instance.health <= Maskloss && !Kill)
                 {
                     LifebloodAPI.SetHealth(1);
@@ -229,6 +230,9 @@ namespace VampireKnight
                 {
                     LifebloodAPI.SubstractHealth(Maskloss);
                     LifebloodAPI.KillHero();
+                } else
+                {
+                    LifebloodAPI.SubstractHealth(Maskloss);
                 }
             }
 
@@ -250,25 +254,25 @@ namespace VampireKnight
         }
 
         Dictionary<string, object> EasyDifficulty = new() {
-            {"BloodlossRate", 4},
+            {"BloodlossRate", 3.5f},
             {"MasklossWhenBloodloss", 1},
             {"Kill", false}
         };
 
         Dictionary<string, object> NormalDifficulty = new() {
-            {"BloodlossRate", 2.5},
+            {"BloodlossRate", 2.25f},
             {"MasklossWhenBloodloss", 1},
             {"Kill", false}
         };
 
         Dictionary<string, object> HardcoreDifficulty = new() {
-            {"BloodlossRate", 4},
+            {"BloodlossRate", 3.5f},
             {"MasklossWhenBloodloss", 2},
             {"Kill", true}
         };
 
         Dictionary<string, object> PantheonDifficulty = new() {
-            {"BloodlossRate", 0.75},
+            {"BloodlossRate", 1f},
             {"MasklossWhenBloodloss", 1},
             {"Kill", false}
         };
@@ -328,7 +332,7 @@ namespace VampireKnight
 
                 new CustomSlider(
                     name: "Custom Bloodloss",
-                    val => GS.CustomBloodlossRate = (int)val,
+                    val => GS.CustomBloodlossRate = (float)val,
                     () => GS.CustomBloodlossRate,
                     1f, 20f, true
                 ),
