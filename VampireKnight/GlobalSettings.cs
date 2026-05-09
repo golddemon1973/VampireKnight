@@ -1,11 +1,15 @@
-﻿using Modding;
+using Modding;
 
 namespace VampireKnight
 {
     public class GlobalSettings
     {
         public bool VampireEnabled = true;
-        public int BloodlossRate = 5;
+        public int ModDifficulty = 1;
+
+        public float CustomBloodlossRate = 3;
+        public int CustomMaskloss = 1;
+        public bool CustomKill = false;
     }
 }
 
